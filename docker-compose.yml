@@ -1,0 +1,80 @@
+services:
+  traefik:
+    image: "traefik:v3.0"
+    restart: always
+    command:
+      - "--api.insecure=true" # Dashboard Traefik di port 8080
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080" # Buka ini buat cek dashboard kalau error
+    volumes:
+      - traefik_data:/letsencrypt
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - infra_network
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    restart: always
+    # Port 5678 dimatikan access luarnya biar kamu TERPAKSA lewat Traefik
+    # ports:
+    #   - "5678:5678"
+    labels:
+      - "traefik.enable=true"
+      # RULE: Hardcode domain n8n.localhost biar pasti kebaca
+      - "traefik.http.routers.n8n.rule=Host(`n8n.localhost`)"
+      - "traefik.http.routers.n8n.entrypoints=websecure"
+      - "traefik.http.routers.n8n.tls=true"
+      # SERVICE: Ini wajib biar Traefik tau n8n jalannya di port berapa di dalem container
+      - "traefik.http.services.n8n.loadbalancer.server.port=5678"
+    environment:
+      - N8N_HOST=n8n.localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - NODE_ENV=production
+      # WEBHOOK_URL: Wajib sama persis dengan yang di browser
+      - WEBHOOK_URL=https://n8n.localhost/
+      - N8N_EDITOR_BASE_URL=https://n8n.localhost/
+      - GENERIC_TIMEZONE=Asia/Jakarta
+      - TZ=Asia/Jakarta
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./local-files:/files
+    networks:
+      - infra_network
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    restart: always
+    container_name: qdrant
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.qdrant.rule=Host(`qdrant.localhost`)"
+      - "traefik.http.routers.qdrant.entrypoints=websecure"
+      - "traefik.http.routers.qdrant.tls=true"
+      - "traefik.http.services.qdrant.loadbalancer.server.port=6333"
+    volumes:
+      - ./qdrant_storage:/qdrant/storage:z
+    # environment:
+    #   - QDRANT__SERVICE__API_KEY=${QDRANT_API_KEY}
+    networks:
+      - infra_network
+
+volumes:
+  n8n_data:
+  traefik_data:
+  qdrant_data:
+
+networks:
+  infra_network:
+    driver: bridge
